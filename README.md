@@ -28,8 +28,41 @@ python3 -c "import numpy; print('numpy available')"
 ## Usage
 
 ```bash
+# Offline demo (no network, no external model) — prints full report, exit 0
 python3 backdoor.py
+
+# Tunable experiment
+python3 backdoor.py --samples 500 --epochs 100 --poison-ratio 0.3 --seed 42
+
+# JSON report to reports/ (gitignored)
+python3 backdoor.py --output reports/ai4-report.json
+
+# Quiet CI mode + JSON
+python3 backdoor.py --quiet --output reports/ai4-report.json
 ```
+
+### Exit Codes
+
+- `0` — experiment completed cleanly
+- `1` — error (bad arguments / report write failure)
+
+### Live Lab Test Plan
+
+Runs entirely offline — the network and training data are generated locally;
+nothing is downloaded and no external ML service is queried.
+
+1. **Demo**: `python3 backdoor.py` — expect clean-model accuracy, poisoned-model accuracy with `backdoor_success_rate`, targeted misclassification rate, trigger persistence flag, and architecture comparison. Exit `0`.
+2. **Backdoor persistence**: confirm `backdoor_success_rate` stays high after training on poisoned data while `clean_test_accuracy` remains near clean accuracy — the trigger is stealthy.
+3. **JSON report**: `python3 backdoor.py --output reports/ai4-report.json` — verify `poisoned`, `trigger_persistence` and `finding.severity` fields.
+4. **Unit tests**: `python3 -m unittest discover -s tests -v` — all pass (trigger injection shape, network predict shape, poisoned-model success range, structured results, CLI JSON write).
+
+## Metrics
+
+- Real backdoor code paths exercised offline: `TriggerPattern.generate/inject/verify_persistence`, `NeuralNetwork.forward/backward/train/predict`, `BackdoorAttack.generate_clean_label_data/train_poisoned/test_poison_accuracy/test_targeted_misclassification/compare_architectures`
+- Metrics emitted: clean test accuracy, poisoned-model clean accuracy, `backdoor_success_rate`, targeted attack rate (class 2→0), persistence flag + max perturbation, layer/param parity + avg weight diff
+- Findings include a severity label and plain-language summary
+- 6 unit tests; exit-code contract `0` clean / `1` error
+- Zero runtime cloud/network dependencies; offline demo needs only numpy
 
 ## Example Output
 

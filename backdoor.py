@@ -251,65 +251,155 @@ class BackdoorAttack:
         return info
 
 
-def main():
-    print("=" * 60)
-    print("AI4 — Neural Network Backdoor Attack Demonstration")
-    print("=" * 60)
-
-    attack = BackdoorAttack(input_size=25, num_classes=5)
-    X, y = attack.generate_data(n_samples=500, seed=42)
-    split = 400
+def run_experiment(input_size: int = 25, num_classes: int = 5,
+                   n_samples: int = 500, seed: int = 42,
+                   epochs: int = 100, poison_ratio: float = 0.3) -> dict:
+    """Run the full backdoor experiment and return structured results."""
+    np.random.seed(seed)
+    attack = BackdoorAttack(input_size=input_size, num_classes=num_classes)
+    X, y = attack.generate_data(n_samples=n_samples, seed=seed)
+    split = int(n_samples * 0.8)
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
 
-    print("\n[1] Training CLEAN model...")
-    attack.train_clean(X_train, y_train, epochs=150)
+    attack.train_clean(X_train, y_train, epochs=epochs)
     clean_acc = attack.test_clean_accuracy(X_test, y_test)
-    print(f"    Clean test accuracy: {clean_acc:.4f}")
 
-    print("\n[2] Training POISONED model (clean-label backdoor)...")
     X_p, y_p = attack.train_poisoned(
-        X_train, y_train, target_class=0, poison_ratio=0.3, epochs=150
-    )
+        X_train, y_train, target_class=0,
+        poison_ratio=poison_ratio, epochs=epochs)
     clean_acc_p, attack_success = attack.test_poison_accuracy(X_test, y_test)
-    print(f"    Poisoned model clean accuracy: {clean_acc_p:.4f}")
-    print(f"    Attack success rate (target=0): {attack_success:.4f}")
 
-    print("\n[3] Targeted misclassification (class 2 -> class 0)...")
     clean_rate, attack_rate = attack.test_targeted_misclassification(
-        X_test, y_test, source_class=2, target_class=0
-    )
-    print(f"    Clean source accuracy: {clean_rate:.4f}")
-    print(f"    Targeted attack rate:  {attack_rate:.4f}")
+        X_test, y_test, source_class=2, target_class=0)
 
-    print("\n[4] Trigger pattern persistence test...")
     is_persistent, max_diff = attack.trigger.verify_persistence(X_test[:10])
-    print(f"    Persistent under noise: {is_persistent}")
-    print(f"    Max perturbation diff:  {max_diff:.4f}")
 
-    print("\n[5] Architecture comparison...")
     info = attack.compare_architectures()
-    print(f"    Clean layers:     {info['clean']['layers']}")
-    print(f"    Poisoned layers:  {info['poisoned']['layers']}")
-    print(f"    Same architecture: {info['identical_architecture']}")
-    print(f"    Same params:      {info['identical_params']}")
-    print(f"    Avg weight diff:  {info['avg_weight_diff']:.6f}")
 
-    print("\n[6] Pattern variants...")
-    fp = TriggerPattern(pattern_size=5)
-    fp.generate_fixed_pattern()
-    injected = fp.inject(X_test[:5])
-    print(f"    Fixed pattern applied to {len(injected)} samples")
+    return {
+        "model": {
+            "input_size": input_size,
+            "num_classes": num_classes,
+            "samples": n_samples,
+            "train_samples": int(len(X_train)),
+            "test_samples": int(len(X_test)),
+            "epochs": epochs,
+            "poison_ratio": poison_ratio,
+            "seed": seed,
+        },
+        "clean": {"test_accuracy": float(clean_acc)},
+        "poisoned": {
+            "clean_test_accuracy": float(clean_acc_p),
+            "backdoor_success_rate": float(attack_success),
+            "poisoned_train_samples": int(len(X_p)),
+        },
+        "targeted_misclassification": {
+            "source_class": 2,
+            "target_class": 0,
+            "clean_source_accuracy": float(clean_rate),
+            "attack_rate": float(attack_rate),
+        },
+        "trigger_persistence": {
+            "persistent_under_noise": bool(is_persistent),
+            "max_perturbation_diff": float(max_diff),
+        },
+        "architecture": {
+            "clean_layers": info["clean"]["layers"],
+            "poisoned_layers": info["poisoned"]["layers"],
+            "identical_architecture": bool(info["identical_architecture"]),
+            "identical_params": bool(info["identical_params"]),
+            "avg_weight_diff": float(info["avg_weight_diff"]),
+        },
+        "finding": {
+            "severity": "HIGH" if attack_success > 0.8 and clean_acc_p > 0.7 else "MEDIUM",
+            "summary": (
+                "Backdoor trigger drives samples to target class at "
+                f"{attack_success:.1%} success while clean accuracy stays "
+                f"{clean_acc_p:.1%} — model is stealthily compromised."
+            ),
+        },
+    }
 
-    rp = TriggerPattern(pattern_size=5)
-    rp.generate_random_pattern(seed=123)
-    injected_r = rp.inject(X_test[:5])
-    print(f"    Random pattern applied to {len(injected_r)} samples")
 
-    print("\n" + "=" * 60)
-    print("Demonstration complete.")
-    print("=" * 60)
+def format_report(results: dict) -> str:
+    lines = []
+    lines.append("=" * 60)
+    lines.append("AI4 — Neural Network Backdoor Attack Demonstration")
+    lines.append("=" * 60)
+
+    lines.append("\n[1] Training CLEAN model...")
+    lines.append(f"    Clean test accuracy: {results['clean']['test_accuracy']:.4f}")
+
+    lines.append("\n[2] Training POISONED model (clean-label backdoor)...")
+    p = results["poisoned"]
+    lines.append(f"    Poisoned model clean accuracy: {p['clean_test_accuracy']:.4f}")
+    lines.append(f"    Attack success rate (target=0): {p['backdoor_success_rate']:.4f}")
+
+    lines.append("\n[3] Targeted misclassification (class 2 -> class 0)...")
+    t = results["targeted_misclassification"]
+    lines.append(f"    Clean source accuracy: {t['clean_source_accuracy']:.4f}")
+    lines.append(f"    Targeted attack rate:  {t['attack_rate']:.4f}")
+
+    lines.append("\n[4] Trigger pattern persistence test...")
+    tp = results["trigger_persistence"]
+    lines.append(f"    Persistent under noise: {tp['persistent_under_noise']}")
+    lines.append(f"    Max perturbation diff:  {tp['max_perturbation_diff']:.4f}")
+
+    lines.append("\n[5] Architecture comparison...")
+    a = results["architecture"]
+    lines.append(f"    Clean layers:     {a['clean_layers']}")
+    lines.append(f"    Poisoned layers:  {a['poisoned_layers']}")
+    lines.append(f"    Same architecture: {a['identical_architecture']}")
+    lines.append(f"    Same params:      {a['identical_params']}")
+    lines.append(f"    Avg weight diff:  {a['avg_weight_diff']:.6f}")
+
+    f = results["finding"]
+    lines.append(f"\n[{f['severity']}] {f['summary']}")
+
+    lines.append("\n" + "=" * 60)
+    lines.append("Demonstration complete.")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    import argparse
+    import json
+    import os
+
+    parser = argparse.ArgumentParser(
+        prog="ai4-nn-backdoor",
+        description="Neural network backdoor research: trigger injection, targeted "
+                    "misclassification, persistence. Offline, self-contained.")
+    parser.add_argument("--samples", type=int, default=500,
+                        help="number of synthetic samples")
+    parser.add_argument("--input-size", type=int, default=25,
+                        help="input feature count")
+    parser.add_argument("--epochs", type=int, default=100,
+                        help="training epochs per model")
+    parser.add_argument("--poison-ratio", type=float, default=0.3,
+                        help="fraction of poisoned training data")
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    parser.add_argument("--output", metavar="FILE",
+                        help="write JSON report to FILE (e.g. reports/ai4-report.json)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress human-readable output")
+    args = parser.parse_args(argv)
+
+    results = run_experiment(
+        input_size=args.input_size, n_samples=args.samples,
+        seed=args.seed, epochs=args.epochs, poison_ratio=args.poison_ratio)
+
+    if args.output:
+        out_dir = os.path.dirname(os.path.abspath(args.output))
+        os.makedirs(out_dir, exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as fh:
+            json.dump(results, fh, indent=2)
+    if not args.quiet:
+        print(format_report(results))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
